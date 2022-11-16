@@ -90,7 +90,7 @@ namespace MediatRPC.Client
             Console.WriteLine($"Request -> " + JsonSerializer.Serialize(request));
             //创建请求消息包
             MediatRpcRequestPackage rpcRequestPackage = new MediatRpcRequestPackage();
-            rpcRequestPackage.RequestHeaders.Add("MediatRMethod", "Send");
+            rpcRequestPackage.MediatRMethod = "Send";
             rpcRequestPackage.RequestHeaders.Add("ContentType", request.GetType().AssemblyQualifiedName);
             using (MemoryStream ms = new MemoryStream())
             {
@@ -109,7 +109,7 @@ namespace MediatRPC.Client
             Console.WriteLine($"Request -> " + JsonSerializer.Serialize(notification));
             //创建请求消息包
             MediatRpcRequestPackage rpcRequestPackage = new MediatRpcRequestPackage();
-            rpcRequestPackage.RequestHeaders.Add("MediatRMethod", "Publish");
+            rpcRequestPackage.MediatRMethod =  "Publish";
             rpcRequestPackage.RequestHeaders.Add("ContentType", notification.GetType().AssemblyQualifiedName);
             using (MemoryStream ms = new MemoryStream())
             {

@@ -9,6 +9,7 @@ namespace MediatRPC.Share
 {
     public class MediatRpcRequestPackage
     {
+        public string MediatRMethod { get; set; }
         public MediatRpcRequestPackage()
         {
             RequestHeaders = new Dictionary<string, string>();

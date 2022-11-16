@@ -98,7 +98,7 @@ namespace MediatRPC.Server
             Console.WriteLine("Request -> " + JsonSerializer.Serialize(rpcRequestBody));
 
             MediatRpcResponsePackage rpcResponsePackage = new MediatRpcResponsePackage();
-            string mediatRMethod = rpcRequestPackage.RequestHeaders["MediatRMethod"];
+            string mediatRMethod = rpcRequestPackage.MediatRMethod;
             if (mediatRMethod == "Send")
             {
                 object rpcResponseBody = await _mediator.Send(rpcRequestBody);

@@ -15,13 +15,13 @@ Console.WriteLine();
 
 MediatRpcClient mediatRpcClient = await MediatRpcClient.Build();
 
-var responseMessage = await mediatRpcClient.Send<TestResponseMessage>(new TestRequestMessage() { Message = "Hello MediatRPC 1" });
-Console.WriteLine(JsonSerializer.Serialize(responseMessage));
+var responseMessage1 = await mediatRpcClient.Send<TestResponseMessage>(new TestRequestMessage() { Message = "Hello MediatRPC 1" });
+Console.WriteLine(JsonSerializer.Serialize(responseMessage1));
 
 Console.WriteLine();
 
-responseMessage = await mediatRpcClient.Send<TestResponseMessage>(new TestRequestMessage() { Message = "Hello MediatRPC 2" });
-Console.WriteLine(JsonSerializer.Serialize(responseMessage));
+var responseMessage2 = await mediatRpcClient.Publish(new TestNotificationMessage() { Message = "Hello MediatRPC 2" });
+Console.WriteLine(responseMessage2);
 
 
 Console.ReadKey();

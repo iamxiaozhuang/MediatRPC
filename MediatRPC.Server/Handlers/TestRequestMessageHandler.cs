@@ -8,10 +8,10 @@ using System.Threading.Tasks;
 
 namespace MediatRPC.Server.Handlers
 {
-    public class TestMessageHandler : IRequestHandler<TestRequestMessage, TestResponseMessage>
+    public class TestRequestMessageHandler : IRequestHandler<TestRequestMessage, TestResponseMessage>
     {
 
-        public TestMessageHandler()
+        public TestRequestMessageHandler()
         {
         }
 

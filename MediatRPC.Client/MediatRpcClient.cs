@@ -57,43 +57,83 @@ namespace MediatRPC.Client
         //    return result;
         //}
 
-        public async Task<TResponse> Send<TResponse>(object request, CancellationToken cancellationToken = default)
+        private async Task<MediatRpcResponsePackage> SendRequestPackge(MediatRpcRequestPackage rpcRequestPackage, CancellationToken cancellationToken = default)
         {
             // 打开一个出站的双向流
             var stream = await ClientQuicConnection.OpenOutboundStreamAsync(QuicStreamType.Bidirectional);
             var reader = PipeReader.Create(stream);
             var writer = PipeWriter.Create(stream);
             //准备接收数据
-            var processTask = ProcessLinesAsync<TResponse>(reader, writer);
-
-            byte[] bytesToSend;
+            var processTask = ProcessLinesAsync(reader, writer);
             //消息对象序列化为字节
+            byte[] bytesOfRequestPackage;
+            using (MemoryStream ms = new MemoryStream())
+            {
+                JsonSerializer.Serialize(ms, rpcRequestPackage);
+                bytesOfRequestPackage = ms.ToArray();
+            };
+            byte[] bytesOfEOL = Encoding.UTF8.GetBytes("\n");
+
+            //拼接要发送的字节
+            byte[] bytesToSend = bytesOfRequestPackage.Concat(bytesOfEOL).ToArray();
+            //写入字节到Stream
+            await writer.WriteAsync(bytesToSend);
+            Console.WriteLine($"Request Package -> " + JsonSerializer.Serialize(rpcRequestPackage));
+            //等待网络返回消息
+            MediatRpcResponsePackage rpcResponsePackage = await processTask.WaitAsync(new TimeSpan(0, 0, 30));
+            Console.WriteLine($"Response Package -> " + JsonSerializer.Serialize(rpcResponsePackage));
+            return rpcResponsePackage;
+        }
+
+        public async Task<TResponse> Send<TResponse>(object request, CancellationToken cancellationToken = default)
+        {
+            Console.WriteLine($"Request -> " + JsonSerializer.Serialize(request));
+            //创建请求消息包
+            MediatRpcRequestPackage rpcRequestPackage = new MediatRpcRequestPackage();
+            rpcRequestPackage.RequestHeaders.Add("MediatRMethod", "Send");
+            rpcRequestPackage.RequestHeaders.Add("ContentType", request.GetType().AssemblyQualifiedName);
             using (MemoryStream ms = new MemoryStream())
             {
                 JsonSerializer.Serialize(ms, request);
-                bytesToSend = ms.ToArray();
+                rpcRequestPackage.RequestBody = ms.ToArray();
             };
-            //拼接要发送的字节
-            bytesToSend = Encoding.UTF8.GetBytes($"{request.GetType().AssemblyQualifiedName}\r").Concat(bytesToSend).Concat(Encoding.UTF8.GetBytes("\n")).ToArray();
-            //写入字节
-            await writer.WriteAsync(bytesToSend);
-            Console.WriteLine("Sent -> " + request);
-            //等待网络返回消息
-            TResponse response = await processTask.WaitAsync(new TimeSpan(0, 0, 30));
-            Console.WriteLine("Recevied -> " + JsonSerializer.Serialize(response));
-            return response;
+            MediatRpcResponsePackage rpcResponsePackage = await SendRequestPackge(rpcRequestPackage);
+            var rpcResponseBody = JsonSerializer.Deserialize<TResponse>(rpcResponsePackage.ResponseBody);
+
+            Console.WriteLine($"Response -> " + JsonSerializer.Serialize(rpcResponseBody));
+            return rpcResponseBody;
         }
 
-        async Task<TResponse> ProcessLinesAsync<TResponse>(PipeReader reader, PipeWriter writer)
+        public async Task<bool> Publish(object notification, CancellationToken cancellationToken = default)
         {
-            TResponse result = default;
+            Console.WriteLine($"Request -> " + JsonSerializer.Serialize(notification));
+            //创建请求消息包
+            MediatRpcRequestPackage rpcRequestPackage = new MediatRpcRequestPackage();
+            rpcRequestPackage.RequestHeaders.Add("MediatRMethod", "Publish");
+            rpcRequestPackage.RequestHeaders.Add("ContentType", notification.GetType().AssemblyQualifiedName);
+            using (MemoryStream ms = new MemoryStream())
+            {
+                JsonSerializer.Serialize(ms, notification);
+                rpcRequestPackage.RequestBody = ms.ToArray();
+            };
+            MediatRpcResponsePackage rpcResponsePackage = await SendRequestPackge(rpcRequestPackage);
+            if (rpcResponsePackage.ResponseHeaders["StatusCode"] == "204")
+            {
+                return true;
+            }
+            return false;
+        }
+
+        async Task<MediatRpcResponsePackage> ProcessLinesAsync(PipeReader reader, PipeWriter writer)
+        {
+            MediatRpcResponsePackage result = default;
             ReadResult readResult = await reader.ReadAsync();
             ReadOnlySequence<byte> buffer = readResult.Buffer;
 
-            while (TryReadLine(ref buffer, out ReadOnlySequence<byte> line))
+            if (TryReadLine(ref buffer, out ReadOnlySequence<byte> line))
             {
                 // 处理行数据
-                result = await ProcessLine<TResponse>(line);
+                result = await ProcessLine(line);
             }
             reader.AdvanceTo(buffer.Start, buffer.End);
             await writer.CompleteAsync();
@@ -116,12 +156,12 @@ namespace MediatRPC.Client
             return true;
         }
 
-        async Task<TResponse> ProcessLine<TResponse>(ReadOnlySequence<byte> buffer)
+        async Task<MediatRpcResponsePackage> ProcessLine(ReadOnlySequence<byte> buffer)
         {
-            TResponse result = default;
+            MediatRpcResponsePackage result = default;
             foreach (var segment in buffer)
             {
-                result = JsonSerializer.Deserialize<TResponse>(segment.Span);
+                result = JsonSerializer.Deserialize<MediatRpcResponsePackage>(segment.Span);
             }
             return result;
         }

@@ -57,7 +57,13 @@ namespace MediatRPC.Client
         //    return result;
         //}
 
-        private async Task<MediatRpcResponsePackage> SendRequestPackge(MediatRpcRequestPackage rpcRequestPackage, CancellationToken cancellationToken = default)
+        /// <summary>
+        /// 发送和接收消息包
+        /// </summary>
+        /// <param name="rpcRequestPackage"></param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        private async Task<MediatRpcResponsePackage> SendAndReceiveMessagePackge(MediatRpcRequestPackage rpcRequestPackage, CancellationToken cancellationToken = default)
         {
             // 打开一个出站的双向流
             var stream = await ClientQuicConnection.OpenOutboundStreamAsync(QuicStreamType.Bidirectional);
@@ -65,7 +71,7 @@ namespace MediatRPC.Client
             var writer = PipeWriter.Create(stream);
             //准备接收数据
             var processTask = ProcessLinesAsync(reader, writer);
-            //消息对象序列化为字节
+            //消息包序列化为字节
             byte[] bytesOfRequestPackage;
             using (MemoryStream ms = new MemoryStream())
             {
@@ -76,10 +82,10 @@ namespace MediatRPC.Client
 
             //拼接要发送的字节
             byte[] bytesToSend = bytesOfRequestPackage.Concat(bytesOfEOL).ToArray();
-            //写入字节到Stream
+            //发送消息字节
             await writer.WriteAsync(bytesToSend);
             Console.WriteLine($"Request Package -> " + JsonSerializer.Serialize(rpcRequestPackage));
-            //等待网络返回消息
+            //等待网络返回消息包
             MediatRpcResponsePackage rpcResponsePackage = await processTask.WaitAsync(new TimeSpan(0, 0, 30));
             Console.WriteLine($"Response Package -> " + JsonSerializer.Serialize(rpcResponsePackage));
             return rpcResponsePackage;
@@ -97,7 +103,7 @@ namespace MediatRPC.Client
                 JsonSerializer.Serialize(ms, request);
                 rpcRequestPackage.RequestBody = ms.ToArray();
             };
-            MediatRpcResponsePackage rpcResponsePackage = await SendRequestPackge(rpcRequestPackage);
+            MediatRpcResponsePackage rpcResponsePackage = await SendAndReceiveMessagePackge(rpcRequestPackage);
             var rpcResponseBody = JsonSerializer.Deserialize<TResponse>(rpcResponsePackage.ResponseBody);
 
             Console.WriteLine($"Response -> " + JsonSerializer.Serialize(rpcResponseBody));
@@ -116,7 +122,7 @@ namespace MediatRPC.Client
                 JsonSerializer.Serialize(ms, notification);
                 rpcRequestPackage.RequestBody = ms.ToArray();
             };
-            MediatRpcResponsePackage rpcResponsePackage = await SendRequestPackge(rpcRequestPackage);
+            MediatRpcResponsePackage rpcResponsePackage = await SendAndReceiveMessagePackge(rpcRequestPackage);
             if (rpcResponsePackage.ResponseHeaders["StatusCode"] == "204")
             {
                 return true;

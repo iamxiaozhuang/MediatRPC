@@ -15,7 +15,7 @@ Console.WriteLine();
 
 MediatRpcClient mediatRpcClient = await MediatRpcClient.Build();
 
-var responseMessage1 = await mediatRpcClient.Send<TestResponseMessage>(new TestRequestMessage() { Message = "Hello MediatRPC 1" });
+var responseMessage1 = await mediatRpcClient.Send(new TestRequestMessage() { Message = "Hello MediatRPC 1" });
 Console.WriteLine(JsonSerializer.Serialize(responseMessage1));
 
 Console.WriteLine();

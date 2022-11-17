@@ -14,7 +14,7 @@ namespace MediatRPC.Share
             RequestHeaders = new Dictionary<string, string>();
         }
         /// <summary>
-        /// 要调用的MediatR方法. "Send" or "Publish"
+        /// 要调用的MediatR方法. "Send" or "Publish" or "CreateStream"
         /// </summary>
         public string MediatRMethod { get; set; }
         /// <summary>

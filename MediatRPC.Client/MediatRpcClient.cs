@@ -91,37 +91,37 @@ namespace MediatRPC.Client
             return rpcResponsePackage;
         }
 
-        public async Task<TResponse> Send<TResponse>(object request, CancellationToken cancellationToken = default)
+        private MediatRpcRequestPackage GenerateRpcRequestPackage(string mediatRMethod,object requestBody)
         {
-            Console.WriteLine($"Request -> " + JsonSerializer.Serialize(request));
             //创建请求消息包
             MediatRpcRequestPackage rpcRequestPackage = new MediatRpcRequestPackage();
-            rpcRequestPackage.MediatRMethod = "Send";
-            rpcRequestPackage.RequestHeaders.Add("ContentType", request.GetType().AssemblyQualifiedName);
+            rpcRequestPackage.MediatRMethod = mediatRMethod;
+            rpcRequestPackage.RequestHeaders.Add("ContentType", requestBody.GetType().AssemblyQualifiedName);
             using (MemoryStream ms = new MemoryStream())
             {
-                JsonSerializer.Serialize(ms, request);
+                JsonSerializer.Serialize(ms, requestBody);
                 rpcRequestPackage.RequestBody = ms.ToArray();
             };
+            return rpcRequestPackage;
+        }
+
+        public async Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
+        {
+            Console.WriteLine($"Sending Request -> " + JsonSerializer.Serialize(request as object));
+            //创建请求消息包
+            MediatRpcRequestPackage rpcRequestPackage = GenerateRpcRequestPackage("Send", request);
             MediatRpcResponsePackage rpcResponsePackage = await SendAndReceiveMessagePackge(rpcRequestPackage);
             var rpcResponseBody = JsonSerializer.Deserialize<TResponse>(rpcResponsePackage.ResponseBody);
 
-            Console.WriteLine($"Response -> " + JsonSerializer.Serialize(rpcResponseBody));
+            Console.WriteLine($"Got Response -> " + JsonSerializer.Serialize(rpcResponseBody));
             return rpcResponseBody;
         }
 
-        public async Task<bool> Publish(object notification, CancellationToken cancellationToken = default)
+        public async Task<bool> Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default)
         {
-            Console.WriteLine($"Request -> " + JsonSerializer.Serialize(notification));
+            Console.WriteLine($"Publishing Notification -> " + JsonSerializer.Serialize(notification as object));
             //创建请求消息包
-            MediatRpcRequestPackage rpcRequestPackage = new MediatRpcRequestPackage();
-            rpcRequestPackage.MediatRMethod =  "Publish";
-            rpcRequestPackage.RequestHeaders.Add("ContentType", notification.GetType().AssemblyQualifiedName);
-            using (MemoryStream ms = new MemoryStream())
-            {
-                JsonSerializer.Serialize(ms, notification);
-                rpcRequestPackage.RequestBody = ms.ToArray();
-            };
+            MediatRpcRequestPackage rpcRequestPackage = GenerateRpcRequestPackage("Publish", notification);
             MediatRpcResponsePackage rpcResponsePackage = await SendAndReceiveMessagePackge(rpcRequestPackage);
             if (rpcResponsePackage.ResponseHeaders["StatusCode"] == "204")
             {

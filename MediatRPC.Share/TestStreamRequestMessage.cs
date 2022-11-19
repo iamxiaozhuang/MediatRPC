@@ -7,11 +7,11 @@ using System.Threading.Tasks;
 
 namespace MediatRPC.Share
 {
-    public class TestRequestMessage : IRequest<TestResponseMessage>
+    public class TestStreamRequestMessage : IStreamRequest<TestStreamResponseMessage>
     {
         public string Message { get; set; }
     }
-    public class TestResponseMessage
+    public class TestStreamResponseMessage
     {
         public string Message { get; set; }
     }

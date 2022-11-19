@@ -23,6 +23,16 @@ Console.WriteLine();
 var responseMessage2 = await mediatRpcClient.Publish(new TestNotificationMessage() { Message = "Hello MediatRPC 2" });
 Console.WriteLine(responseMessage2);
 
+Console.WriteLine();
+
+
+await foreach (TestStreamResponseMessage responseMessage in mediatRpcClient.CreateStream(new TestStreamRequestMessage() { Message = "Hello MediatRPC 3" }))
+{
+    Console.WriteLine(responseMessage);
+}
+  
+
+
 
 Console.ReadKey();
 

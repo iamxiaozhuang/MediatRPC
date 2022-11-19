@@ -15,6 +15,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
 using System.Runtime.CompilerServices;
+using System.Net.NetworkInformation;
 
 namespace MediatRPC.Server
 {
@@ -29,94 +30,139 @@ namespace MediatRPC.Server
             ParentMediatRpcConnect = mediatRpcConnect;
             _mediator = serviceProvider.GetRequiredService<IMediator>();
 
-            _ = ProcessLinesAsync(quicStream);
+            _ = ProcessStreamAsync(quicStream);
         }
 
 
         // 处理流数据
-        async Task ProcessLinesAsync(QuicStream quicStream)
+        async Task ProcessStreamAsync(QuicStream quicStream)
         {
             var reader = PipeReader.Create(quicStream);
             var writer = PipeWriter.Create(quicStream);
+            try
+            {
+                while (true)
+                {
+                    ReadResult readResult = await reader.ReadAsync();
+                    ReadOnlySequence<byte> buffer = readResult.Buffer;
 
+                    try
+                    {
+                        if (readResult.IsCanceled)
+                        {
+                            break;
+                        }
+                        if (TryParseLines(ref buffer, out List<MediatRpcRequestPackage> rpcRequestPackages))
+                        {
+                             await ProcessLines(rpcRequestPackages, writer);
+                        }
+
+                        if (readResult.IsCompleted)
+                        {
+                            if (!buffer.IsEmpty)
+                            {
+                                throw new InvalidDataException("Incomplete message.");
+                            }
+                            break;
+                        }
+                    }
+                    finally
+                    {
+                        reader.AdvanceTo(buffer.Start, buffer.End);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex);
+            }
+            finally
+            {
+                await reader.CompleteAsync();
+                await writer.CompleteAsync();
+
+                Console.WriteLine($"Stream [{quicStream.Id}]: completed");
+                ParentMediatRpcConnect.MediatRpcStreams.Remove(quicStream.Id);
+            }
+        }
+
+        bool TryParseLines(ref ReadOnlySequence<byte> buffer, out List<MediatRpcRequestPackage> rpcRequestPackages)
+        {
+            List<MediatRpcRequestPackage> result = new List<MediatRpcRequestPackage>();
+            SequencePosition? position;
             while (true)
             {
-                ReadResult result = await reader.ReadAsync();
-                ReadOnlySequence<byte> buffer = result.Buffer;
-
-                while (TryReadLine(ref buffer, out ReadOnlySequence<byte> line))
-                {
-                    // Process the line. 
-                    await ProcessLine(line, writer);
-                }
-
-                // Tell the PipeReader how much of the buffer has been consumed.
-                reader.AdvanceTo(buffer.Start, buffer.End);
-
-                // Stop reading if there's no more data coming.
-                if (result.IsCompleted)
-                {
+                position = buffer.PositionOf((byte)'\n');
+                if (!position.HasValue)
                     break;
+                var line = buffer.Slice(buffer.Start, position.Value);
+                //Span<byte> lineBytes = new Span<byte>();
+                //line.CopyTo(lineBytes);
+                MediatRpcRequestPackage rpcRequestPackage = JsonSerializer.Deserialize<MediatRpcRequestPackage>(line.FirstSpan);
+                result.Add(rpcRequestPackage);
+
+                buffer = buffer.Slice(buffer.GetPosition(1, position.Value));
+            };
+
+            rpcRequestPackages = result;
+            return rpcRequestPackages.Count != 0;
+        }
+
+        async Task ProcessLines(List<MediatRpcRequestPackage> rpcRequestPackages, PipeWriter writer)
+        {
+            foreach (MediatRpcRequestPackage rpcRequestPackage in rpcRequestPackages)
+            {
+
+                Console.WriteLine("Request Package -> " + JsonSerializer.Serialize(rpcRequestPackage));
+                var rpcRequestBody = JsonSerializer.Deserialize(rpcRequestPackage.RequestBody, Type.GetType(rpcRequestPackage.RequestHeaders["ContentType"]));
+                Console.WriteLine("Request -> " + JsonSerializer.Serialize(rpcRequestBody));
+
+                string mediatRMethod = rpcRequestPackage.MediatRMethod;
+                if (mediatRMethod == "Send")
+                {
+                    object rpcResponseBody = await _mediator.Send(rpcRequestBody);
+                    Console.WriteLine("Response -> " + JsonSerializer.Serialize(rpcResponseBody));
+                    MediatRpcResponsePackage rpcResponsePackage = new MediatRpcResponsePackage();
+                    rpcResponsePackage.ResponseHeaders.Add("StatusCode", "200");
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        JsonSerializer.Serialize(ms, rpcResponseBody);
+                        rpcResponsePackage.ResponseBody = ms.ToArray();
+                    };
+                    await SendResponsePackge(rpcResponsePackage, writer);
+                }
+
+                if (mediatRMethod == "Publish")
+                {
+                    await _mediator.Publish(rpcRequestBody);
+                    MediatRpcResponsePackage rpcResponsePackage = new MediatRpcResponsePackage();
+                    rpcResponsePackage.ResponseHeaders.Add("StatusCode", "204");
+                    await SendResponsePackge(rpcResponsePackage, writer);
+                }
+
+                if (mediatRMethod == "CreateStream")
+                {
+                    await foreach (object rpcResponseBody in _mediator.CreateStream(rpcRequestBody))
+                    {
+                        // 根据流式响应的结果进行处理
+                        Console.WriteLine("Response -> " + JsonSerializer.Serialize(rpcResponseBody));
+                        MediatRpcResponsePackage rpcResponsePackage = new MediatRpcResponsePackage();
+                        rpcResponsePackage.ResponseHeaders.Add("StatusCode", "200");
+                        using (MemoryStream ms = new MemoryStream())
+                        {
+                            JsonSerializer.Serialize(ms, rpcResponseBody);
+                            rpcResponsePackage.ResponseBody = ms.ToArray();
+                        };
+                        await SendResponsePackge(rpcResponsePackage, writer);
+                    }
                 }
             }
-            await writer.CompleteAsync();
-            await reader.CompleteAsync();
-            Console.WriteLine($"Stream [{quicStream.Id}]: completed");
-            ParentMediatRpcConnect.MediatRpcStreams.Remove(quicStream.Id);
+            //数据写入完成,发送数据完成（分页）标记
+            await writer.WriteAsync(Encoding.UTF8.GetBytes("\f")); 
         }
 
-        bool TryReadLine(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> line)
+        async ValueTask<FlushResult> SendResponsePackge(MediatRpcResponsePackage rpcResponsePackage, PipeWriter writer)
         {
-            // Look for a EOL in the buffer.
-            SequencePosition? position = buffer.PositionOf((byte)'\n');
-
-            if (position == null)
-            {
-                line = default;
-                return false;
-            }
-
-            // Skip the line + the \n.
-            line = buffer.Slice(0, position.Value);
-            buffer = buffer.Slice(buffer.GetPosition(1, position.Value));
-            return true;
-        }
-
-        async Task ProcessLine(ReadOnlySequence<byte> buffer, PipeWriter writer)
-        {
-            MediatRpcRequestPackage rpcRequestPackage = null;
-            foreach (var segment in buffer)
-            {
-                rpcRequestPackage = JsonSerializer.Deserialize<MediatRpcRequestPackage>(segment.Span);
-            }
-            if (rpcRequestPackage == null)
-            {
-                throw new Exception("MediatRpcRequestPackage is null");
-            }
-            Console.WriteLine("Request Package -> " + JsonSerializer.Serialize(rpcRequestPackage));
-            var rpcRequestBody = JsonSerializer.Deserialize(rpcRequestPackage.RequestBody, Type.GetType(rpcRequestPackage.RequestHeaders["ContentType"]));
-            Console.WriteLine("Request -> " + JsonSerializer.Serialize(rpcRequestBody));
-
-            MediatRpcResponsePackage rpcResponsePackage = new MediatRpcResponsePackage();
-            string mediatRMethod = rpcRequestPackage.MediatRMethod;
-            if (mediatRMethod == "Send")
-            {
-                object rpcResponseBody = await _mediator.Send(rpcRequestBody);
-                Console.WriteLine("Response -> " + JsonSerializer.Serialize(rpcResponseBody));
-                rpcResponsePackage.ResponseHeaders.Add("StatusCode", "200");
-                using (MemoryStream ms = new MemoryStream())
-                {
-                    JsonSerializer.Serialize(ms, rpcResponseBody);
-                    rpcResponsePackage.ResponseBody = ms.ToArray();
-                };
-            }
-
-            if (mediatRMethod == "Publish")
-            {
-                await _mediator.Publish(rpcRequestBody);
-                rpcResponsePackage.ResponseHeaders.Add("StatusCode", "204");
-            }
-
             //消息对象序列化为字节
             byte[] bytesOfResponsePackage;
             using (MemoryStream ms = new MemoryStream())
@@ -129,8 +175,9 @@ namespace MediatRPC.Server
             //拼接要发送的字节
             byte[] bytesToSend = bytesOfResponsePackage.Concat(bytesOfEOL).ToArray();
             //写入字节到Stream
-            await writer.WriteAsync(bytesToSend);
+
             Console.WriteLine("Response Package -> " + JsonSerializer.Serialize(rpcResponsePackage));
+            return await writer.WriteAsync(bytesToSend);
         }
     }
 }

@@ -17,11 +17,12 @@ namespace MediatRPC.Client
 {
     public class MediatRpcClient
     {
-        public QuicConnection ClientQuicConnection { get; set; }
+        private readonly QuicConnection clientQuicConnection;
 
+       
         private MediatRpcClient(QuicConnection quicConnection)
         {
-            ClientQuicConnection = quicConnection;
+            clientQuicConnection = quicConnection;
         }
 
         public static async Task<MediatRpcClient> Build()
@@ -67,9 +68,13 @@ namespace MediatRPC.Client
         private async IAsyncEnumerable<MediatRpcResponsePackage> SendAndReceiveMessagePackge(MediatRpcRequestPackage rpcRequestPackage, CancellationToken cancellationToken = default)
         {
             // 打开一个出站的双向流
-            var stream = await ClientQuicConnection.OpenOutboundStreamAsync(QuicStreamType.Bidirectional);
+            var stream = await clientQuicConnection.OpenOutboundStreamAsync(QuicStreamType.Bidirectional);
+            var streamReader = PipeReader.Create(stream);
+            var streamWriter = PipeWriter.Create(stream);
+            //发送数据
+            FlushResult flushResult = await SendRequestPackge(rpcRequestPackage, streamWriter);
             //处理流数据，发送并等待消息返回
-            await foreach (MediatRpcResponsePackage rpcResponsePackage in  ProcessStreamAsync(stream, rpcRequestPackage))
+            await foreach (MediatRpcResponsePackage rpcResponsePackage in ProcessStreamAsync(streamReader, streamWriter, flushResult))
             {
                 Console.WriteLine($"Response Package -> " + JsonSerializer.Serialize(rpcResponsePackage));
                 yield return rpcResponsePackage;
@@ -136,12 +141,8 @@ namespace MediatRPC.Client
             }
         }
 
-        async IAsyncEnumerable<MediatRpcResponsePackage> ProcessStreamAsync(QuicStream stream, MediatRpcRequestPackage rpcRequestPackage)
+        async IAsyncEnumerable<MediatRpcResponsePackage> ProcessStreamAsync(PipeReader reader, PipeWriter writer, FlushResult flushResult)
         {
-            var reader = PipeReader.Create(stream);
-            var writer = PipeWriter.Create(stream);
-            //发送数据
-            FlushResult flushResult = await SendRequestPackge(rpcRequestPackage, writer);
 
             while (true)
             {

@@ -16,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
 using System.Runtime.CompilerServices;
 using System.Net.NetworkInformation;
+using System.IO;
 
 namespace MediatRPC.Server
 {
@@ -23,22 +24,37 @@ namespace MediatRPC.Server
     {
         private readonly IMediator _mediator;
 
-        public MediatRpcConnect ParentMediatRpcConnect { get; }
+        private readonly MediatRpcConnect parentMediatRpcConnect;
+
+        private readonly PipeReader streamReader;
+        private readonly PipeWriter streamWriter;
 
         public MediatRpcStream(IServiceProvider serviceProvider, MediatRpcConnect mediatRpcConnect,QuicStream quicStream)
         {
-            ParentMediatRpcConnect = mediatRpcConnect;
+            parentMediatRpcConnect = mediatRpcConnect;
             _mediator = serviceProvider.GetRequiredService<IMediator>();
 
-            _ = ProcessStreamAsync(quicStream);
+            streamReader = PipeReader.Create(quicStream);
+            streamWriter = PipeWriter.Create(quicStream);
+            _ = ProcessStreamAsync(streamReader, streamWriter,() =>
+            {
+                Console.WriteLine($"Stream [{quicStream.Id}]: completed");
+                parentMediatRpcConnect.MediatRpcStreams.Remove(quicStream.Id);
+            }
+            );
+        }
+
+        public void StopStream()
+        {
+            streamReader.CancelPendingRead();
+            streamWriter.CancelPendingFlush();
         }
 
 
         // 处理流数据
-        async Task ProcessStreamAsync(QuicStream quicStream)
+        async Task ProcessStreamAsync(PipeReader reader, PipeWriter writer, Action streamCompletedCallBack)
         {
-            var reader = PipeReader.Create(quicStream);
-            var writer = PipeWriter.Create(quicStream);
+         
             try
             {
                 while (true)
@@ -84,8 +100,7 @@ namespace MediatRPC.Server
                 await reader.CompleteAsync();
                 await writer.CompleteAsync();
 
-                Console.WriteLine($"Stream [{quicStream.Id}]: completed");
-                ParentMediatRpcConnect.MediatRpcStreams.Remove(quicStream.Id);
+                streamCompletedCallBack();
             }
         }
 

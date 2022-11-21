@@ -32,8 +32,6 @@ await foreach (TestStreamResponseMessage responseMessage in mediatRpcClient.Crea
 }
   
 
-
-
 Console.ReadKey();
 
 

@@ -120,15 +120,11 @@ namespace MediatRPC.Server
                 {
                     lineBytes = line.FirstSpan;
                 }
-                else if (line.Length < 128)
-                { 
+                else
+                {
                     var data = new Span<byte>(new byte[line.Length]);
                     line.CopyTo(data);
                     lineBytes = data;
-                }
-                else
-                {
-                    lineBytes = new ReadOnlySpan<byte>(line.ToArray());
                 }
                 MediatRpcRequestPackage rpcRequestPackage = JsonSerializer.Deserialize<MediatRpcRequestPackage>(lineBytes);
                 result.Add(rpcRequestPackage);

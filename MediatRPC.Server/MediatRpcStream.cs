@@ -54,7 +54,10 @@ namespace MediatRPC.Server
                         }
                         if (TryParseLines(ref buffer, out List<MediatRpcRequestPackage> rpcRequestPackages))
                         {
-                             await ProcessLines(rpcRequestPackages, writer);
+                            if (!await ProcessLines(rpcRequestPackages, writer))
+                            {
+                                break;
+                            }
                         }
 
                         if (readResult.IsCompleted)
@@ -95,10 +98,24 @@ namespace MediatRPC.Server
                 position = buffer.PositionOf((byte)'\n');
                 if (!position.HasValue)
                     break;
+
                 var line = buffer.Slice(buffer.Start, position.Value);
-                //Span<byte> lineBytes = new Span<byte>();
-                //line.CopyTo(lineBytes);
-                MediatRpcRequestPackage rpcRequestPackage = JsonSerializer.Deserialize<MediatRpcRequestPackage>(line.FirstSpan);
+                ReadOnlySpan<byte> lineBytes;
+                if (line.IsSingleSegment)
+                {
+                    lineBytes = line.FirstSpan;
+                }
+                else if (line.Length < 128)
+                { 
+                    var data = new Span<byte>(new byte[line.Length]);
+                    line.CopyTo(data);
+                    lineBytes = data;
+                }
+                else
+                {
+                    lineBytes = new ReadOnlySpan<byte>(line.ToArray());
+                }
+                MediatRpcRequestPackage rpcRequestPackage = JsonSerializer.Deserialize<MediatRpcRequestPackage>(lineBytes);
                 result.Add(rpcRequestPackage);
 
                 buffer = buffer.Slice(buffer.GetPosition(1, position.Value));
@@ -108,7 +125,7 @@ namespace MediatRPC.Server
             return rpcRequestPackages.Count != 0;
         }
 
-        async Task ProcessLines(List<MediatRpcRequestPackage> rpcRequestPackages, PipeWriter writer)
+        async Task<bool> ProcessLines(List<MediatRpcRequestPackage> rpcRequestPackages, PipeWriter writer)
         {
             foreach (MediatRpcRequestPackage rpcRequestPackage in rpcRequestPackages)
             {
@@ -129,7 +146,11 @@ namespace MediatRPC.Server
                         JsonSerializer.Serialize(ms, rpcResponseBody);
                         rpcResponsePackage.ResponseBody = ms.ToArray();
                     };
-                    await SendResponsePackge(rpcResponsePackage, writer);
+
+                    if (!await SendResponsePackge(rpcResponsePackage, writer))
+                    {
+                        return false;
+                    }
                 }
 
                 if (mediatRMethod == "Publish")
@@ -137,7 +158,10 @@ namespace MediatRPC.Server
                     await _mediator.Publish(rpcRequestBody);
                     MediatRpcResponsePackage rpcResponsePackage = new MediatRpcResponsePackage();
                     rpcResponsePackage.ResponseHeaders.Add("StatusCode", "204");
-                    await SendResponsePackge(rpcResponsePackage, writer);
+                    if (!await SendResponsePackge(rpcResponsePackage, writer))
+                    {
+                        return false;
+                    }
                 }
 
                 if (mediatRMethod == "CreateStream")
@@ -153,15 +177,19 @@ namespace MediatRPC.Server
                             JsonSerializer.Serialize(ms, rpcResponseBody);
                             rpcResponsePackage.ResponseBody = ms.ToArray();
                         };
-                        await SendResponsePackge(rpcResponsePackage, writer);
+                        if (!await SendResponsePackge(rpcResponsePackage, writer))
+                        {
+                            return false;
+                        }
                     }
                 }
             }
             //数据写入完成,发送数据完成（分页）标记
-            await writer.WriteAsync(Encoding.UTF8.GetBytes("\f")); 
+            await writer.WriteAsync(Encoding.UTF8.GetBytes("\f"));
+            return true;
         }
 
-        async ValueTask<FlushResult> SendResponsePackge(MediatRpcResponsePackage rpcResponsePackage, PipeWriter writer)
+        async Task<bool> SendResponsePackge(MediatRpcResponsePackage rpcResponsePackage, PipeWriter writer)
         {
             //消息对象序列化为字节
             byte[] bytesOfResponsePackage;
@@ -177,7 +205,12 @@ namespace MediatRPC.Server
             //写入字节到Stream
 
             Console.WriteLine("Response Package -> " + JsonSerializer.Serialize(rpcResponsePackage));
-            return await writer.WriteAsync(bytesToSend);
+            FlushResult flushResult = await writer.WriteAsync(bytesToSend);
+            if (flushResult.IsCanceled || flushResult.IsCompleted)
+            {
+                return false;
+            }
+            return true;
         }
     }
 }

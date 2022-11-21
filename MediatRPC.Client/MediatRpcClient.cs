@@ -141,7 +141,7 @@ namespace MediatRPC.Client
             var reader = PipeReader.Create(stream);
             var writer = PipeWriter.Create(stream);
             //发送数据
-            await SendRequestPackge(rpcRequestPackage, writer);
+            FlushResult flushResult = await SendRequestPackge(rpcRequestPackage, writer);
 
             while (true)
             {
@@ -150,6 +150,10 @@ namespace MediatRPC.Client
 
                 try
                 {
+                    if (flushResult.IsCanceled || flushResult.IsCompleted)
+                    {
+                        break;
+                    }
                     if (readResult.IsCanceled)
                     {
                         break;
@@ -195,9 +199,22 @@ namespace MediatRPC.Client
                     break;
 
                 var line = buffer.Slice(buffer.Start, position.Value);
-                //Span<byte> lineBytes = new Span<byte>();
-                //line.CopyTo(lineBytes);
-                MediatRpcResponsePackage rpcResponsePackage = JsonSerializer.Deserialize<MediatRpcResponsePackage>(line.FirstSpan);
+                ReadOnlySpan<byte> lineBytes;
+                if (line.IsSingleSegment)
+                {
+                    lineBytes = line.FirstSpan;
+                }
+                else if (line.Length < 128)
+                {
+                    var data = new Span<byte>(new byte[line.Length]);
+                    line.CopyTo(data);
+                    lineBytes = data;
+                }
+                else
+                {
+                    lineBytes = new ReadOnlySpan<byte>(line.ToArray());
+                }
+                MediatRpcResponsePackage rpcResponsePackage = JsonSerializer.Deserialize<MediatRpcResponsePackage>(lineBytes);
                 result.Add(rpcResponsePackage);
 
                 buffer = buffer.Slice(buffer.GetPosition(1, position.Value));
